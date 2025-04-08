@@ -177,7 +177,7 @@ impl NatsExporter {
             *prev = curr;
 
             // Publish.
-            Self::publish_counter(self.client, &self.client_pending, subject.to_string(), curr);
+            Self::publish_metric(self.client, &self.client_pending, subject.to_string(), curr);
         });
 
         self.recorder.registry.visit_gauges(|key, gauge| {
@@ -190,7 +190,7 @@ impl NatsExporter {
             *prev = curr;
 
             // Publish.
-            Self::publish_gauge(self.client, &self.client_pending, subject.to_string(), curr);
+            Self::publish_metric(self.client, &self.client_pending, subject.to_string(), curr);
         });
 
         // TODO: Publish histograms.
@@ -209,7 +209,7 @@ impl NatsExporter {
             *prev = curr;
 
             // Publish.
-            Self::publish_counter(self.client, &self.client_pending, subject.to_string(), curr);
+            Self::publish_metric(self.client, &self.client_pending, subject.to_string(), curr);
         });
 
         self.recorder.registry.visit_gauges(|key, gauge| {
@@ -224,32 +224,27 @@ impl NatsExporter {
             *prev = curr;
 
             // Publish.
-            Self::publish_gauge(self.client, &self.client_pending, subject.to_string(), curr);
+            Self::publish_metric(self.client, &self.client_pending, subject.to_string(), curr);
         });
 
         // TODO: Publish histograms.
     }
 
-    fn publish_counter(
+    fn publish_metric(
         client: &'static Client,
         client_pending: &FuturesUnordered<BoxFuture<'static, ()>>,
         subject: String,
-        counter: u64,
+        val: u64,
     ) {
-        let body = serde_json::to_vec(&Metric::Counter(counter))
-            .unwrap()
-            .into();
-        client_pending.push(async move { client.publish(subject, body).await.unwrap() }.boxed());
-    }
-
-    fn publish_gauge(
-        client: &'static Client,
-        client_pending: &FuturesUnordered<BoxFuture<'static, ()>>,
-        subject: String,
-        gauge: u64,
-    ) {
-        let body = serde_json::to_vec(&Metric::Gauge(gauge)).unwrap().into();
-        client_pending.push(async move { client.publish(subject, body).await.unwrap() }.boxed());
+        client_pending.push(
+            async move {
+                client
+                    .publish(subject, val.to_string().into())
+                    .await
+                    .unwrap()
+            }
+            .boxed(),
+        );
     }
 
     fn metric_name(key: &Key) -> String {
@@ -261,10 +256,4 @@ impl NatsExporter {
                 .join(".")
         )
     }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-enum Metric {
-    Counter(u64),
-    Gauge(u64),
 }
