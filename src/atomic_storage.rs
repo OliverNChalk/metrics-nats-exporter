@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use metrics::atomics::AtomicU64;
 use metrics::HistogramFn;
-use metrics_util::registry::GenerationalStorage;
 use metrics_util::storage::AtomicBucket;
 use quanta::Instant;
 
