@@ -10,6 +10,15 @@ use recorder::NatsRecorder;
 use thiserror::Error;
 pub use tokio_util::sync::CancellationToken;
 
+/// Installs the global metrics recorder.
+///
+/// # Returns
+///
+/// Returns a [`JoinHandle`] to the publisher thread.
+///
+/// # Errors
+///
+/// Returns an error an failure to install the recorder.
 pub fn install(cxl: CancellationToken, config: Config) -> Result<JoinHandle<()>, InstallError> {
     NatsRecorder::install(cxl, config)
 }

@@ -98,9 +98,8 @@ impl NatsExporter {
         std::thread::Builder::new()
             .name("MetricsNats".to_string())
             .spawn(move || {
-                runtime.block_on(
-                    NatsExporter::setup(cxl, config, recorder).then(|exporter| exporter.run()),
-                )
+                runtime
+                    .block_on(NatsExporter::setup(cxl, config, recorder).then(NatsExporter::run));
             })
             .map_err(Into::into)
     }
@@ -133,7 +132,7 @@ impl NatsExporter {
             tokio::select! {
                 biased;
 
-                _ = self.cxl.cancelled() => break,
+                () = self.cxl.cancelled() => break,
                 now = self.interval.tick() => self.tick(now),
 
                 Some(()) = self.client_pending.next() => {},
@@ -145,6 +144,7 @@ impl NatsExporter {
         // TODO: Check if histograms need resetting.
 
         // Backoff if previous publish has not been processed yet.
+        #[allow(clippy::arithmetic_side_effects)]
         if !self.client_pending.is_empty() {
             self.consecutive_skipped += 1;
             warn!(self.consecutive_skipped, "NatsExporter not keeping up, skipping publish");
@@ -156,6 +156,7 @@ impl NatsExporter {
         self.consecutive_skipped = 0;
 
         // Determine if we should perform a full publish.
+        #[allow(clippy::arithmetic_side_effects)]
         match interval_start - self.last_publish_all > self.config.interval_max {
             true => {
                 self.publish_all();
@@ -177,7 +178,7 @@ impl NatsExporter {
             *prev = curr;
 
             // Publish.
-            Self::publish_metric(self.client, &self.client_pending, subject.to_string(), curr);
+            Self::publish_metric(self.client, &self.client_pending, subject.clone(), &curr);
         });
 
         // Gauges.
@@ -191,7 +192,7 @@ impl NatsExporter {
             *prev = curr;
 
             // Publish.
-            Self::publish_metric(self.client, &self.client_pending, subject.to_string(), curr);
+            Self::publish_metric(self.client, &self.client_pending, subject.clone(), &curr);
         });
 
         // Histograms.
@@ -220,7 +221,7 @@ impl NatsExporter {
             *prev = curr;
 
             // Publish.
-            Self::publish_metric(self.client, &self.client_pending, subject.to_string(), curr);
+            Self::publish_metric(self.client, &self.client_pending, subject.clone(), &curr);
         });
 
         self.recorder.registry.visit_gauges(|key, gauge| {
@@ -235,7 +236,7 @@ impl NatsExporter {
             *prev = curr;
 
             // Publish.
-            Self::publish_metric(self.client, &self.client_pending, subject.to_string(), curr);
+            Self::publish_metric(self.client, &self.client_pending, subject.clone(), &curr);
         });
 
         self.recorder.registry.visit_histograms(|key, histogram| {
@@ -306,6 +307,7 @@ impl NatsExporter {
 
         if should_publish {
             // Convert overview and quantiles to publishable metrics.
+            #[allow(clippy::cast_precision_loss)]
             let overview = [(&*count_subject, count as f64), (sum_subject, *sum)];
             let quantiles =
                 izip!(quantile_subjects.iter(), quantiles.iter()).map(|(subject, quantile)| {
@@ -314,7 +316,7 @@ impl NatsExporter {
 
             // Publish all metrics starting with the overview.
             for (subject, val) in overview.into_iter().chain(quantiles) {
-                Self::publish_metric(client, client_pending, subject.to_string(), val);
+                Self::publish_metric(client, client_pending, subject.to_string(), &val);
             }
         }
     }
@@ -323,7 +325,7 @@ impl NatsExporter {
         client: &'static Client,
         client_pending: &FuturesUnordered<BoxFuture<'static, ()>>,
         subject: String,
-        val: impl ToString,
+        val: &impl ToString,
     ) {
         let val = val.to_string();
 
