@@ -708,6 +708,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "metrics-exporter-prometheus"
+version = "0.16.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd7399781913e5393588a8d8c6a2867bf85fb38eaf2502fdce465aad2dc6f034"
+dependencies = [
+ "base64",
+ "indexmap",
+ "metrics",
+ "metrics-util",
+ "quanta",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "metrics-nats-exporter"
 version = "0.1.0"
 dependencies = [
@@ -716,7 +730,9 @@ dependencies = [
  "hashbrown",
  "itertools",
  "metrics",
+ "metrics-exporter-prometheus",
  "metrics-util",
+ "quanta",
  "serde",
  "serde_json",
  "thiserror 2.0.12",

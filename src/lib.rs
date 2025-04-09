@@ -1,3 +1,4 @@
+mod atomic_storage;
 mod recorder;
 
 use std::thread::JoinHandle;
