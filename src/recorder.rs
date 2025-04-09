@@ -34,9 +34,10 @@ impl NatsRecorder {
     pub(crate) fn install(
         cxl: CancellationToken,
         config: Config,
+        client: &'static Client,
     ) -> Result<JoinHandle<()>, InstallError> {
         let recorder = NatsRecorder { registry: Arc::new(Registry::new(AtomicStorage)) };
-        let exporter = NatsExporter::spawn(cxl, config, recorder.clone())?;
+        let exporter = NatsExporter::spawn(cxl, config, client, recorder.clone())?;
         metrics::set_global_recorder(recorder)?;
 
         Ok(exporter)
@@ -90,6 +91,7 @@ impl NatsExporter {
     fn spawn(
         cxl: CancellationToken,
         config: Config,
+        client: &'static Client,
         recorder: NatsRecorder,
     ) -> Result<JoinHandle<()>, InstallError> {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -99,17 +101,21 @@ impl NatsExporter {
         std::thread::Builder::new()
             .name("MetricsNats".to_string())
             .spawn(move || {
-                runtime
-                    .block_on(NatsExporter::setup(cxl, config, recorder).then(NatsExporter::run));
+                runtime.block_on(
+                    NatsExporter::setup(cxl, config, client, recorder).then(NatsExporter::run),
+                );
             })
             .map_err(Into::into)
     }
 
-    async fn setup(cxl: CancellationToken, config: Config, recorder: NatsRecorder) -> Self {
+    async fn setup(
+        cxl: CancellationToken,
+        config: Config,
+        client: &'static Client,
+        recorder: NatsRecorder,
+    ) -> Self {
         let mut interval = tokio::time::interval(config.interval_min);
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-
-        let client = Box::leak(Box::new(async_nats::connect(&config.nats_servers).await.unwrap()));
 
         NatsExporter {
             config,

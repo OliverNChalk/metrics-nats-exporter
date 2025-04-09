@@ -4,7 +4,7 @@ mod recorder;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-pub use async_nats::ServerAddr;
+pub use async_nats::{Client, ServerAddr};
 use metrics::SetRecorderError;
 use recorder::NatsRecorder;
 use thiserror::Error;
@@ -19,14 +19,16 @@ pub use tokio_util::sync::CancellationToken;
 /// # Errors
 ///
 /// Returns an error an failure to install the recorder.
-pub fn install(cxl: CancellationToken, config: Config) -> Result<JoinHandle<()>, InstallError> {
-    NatsRecorder::install(cxl, config)
+pub fn install(
+    cxl: CancellationToken,
+    config: Config,
+    client: &'static Client,
+) -> Result<JoinHandle<()>, InstallError> {
+    NatsRecorder::install(cxl, config, client)
 }
 
 /// Configuration to control the NATS publishing.
 pub struct Config {
-    /// The NATS servers to connect to.
-    pub nats_servers: Vec<ServerAddr>,
     /// Metrics that have changed will be published this frequently.
     pub interval_min: Duration,
     /// Metrics that have not changed will be published this frequently.
