@@ -2,7 +2,7 @@ use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 
 use async_nats::Client;
 use futures::future::BoxFuture;
@@ -14,6 +14,7 @@ use itertools::{izip, Itertools};
 use metrics::Key;
 use metrics_exporter_prometheus::Distribution;
 use metrics_util::Quantile;
+use serde::{Deserialize, Serialize};
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
@@ -126,6 +127,8 @@ impl NatsExporter {
     }
 
     fn publish_all(&mut self) {
+        let now = UNIX_EPOCH.elapsed().unwrap().as_millis();
+
         self.recorder.registry.visit_counters(|key, counter| {
             Self::handle_metric(
                 &mut self.metrics,
@@ -134,6 +137,7 @@ impl NatsExporter {
                 key,
                 counter,
                 true,
+                now,
             );
         });
 
@@ -145,6 +149,7 @@ impl NatsExporter {
                 key,
                 gauge,
                 true,
+                now,
             );
         });
 
@@ -156,11 +161,14 @@ impl NatsExporter {
                 key,
                 histogram,
                 true,
+                now,
             );
         });
     }
 
     fn publish_changed(&mut self) {
+        let now = UNIX_EPOCH.elapsed().unwrap().as_millis();
+
         self.recorder.registry.visit_counters(|key, counter| {
             Self::handle_metric(
                 &mut self.metrics,
@@ -169,6 +177,7 @@ impl NatsExporter {
                 key,
                 counter,
                 false,
+                now,
             );
         });
 
@@ -180,6 +189,7 @@ impl NatsExporter {
                 key,
                 gauge,
                 false,
+                now,
             );
         });
 
@@ -191,6 +201,7 @@ impl NatsExporter {
                 key,
                 histogram,
                 false,
+                now,
             );
         });
     }
@@ -202,23 +213,30 @@ impl NatsExporter {
         key: &Key,
         metric: &Arc<AtomicU64>,
         publish_all: bool,
+        now: u128,
     ) {
         // Load current value.
         let curr = metric.load(Ordering::Relaxed);
 
         // Check if the metric has changed.
-        let ((subject, prev), new) = match metrics.entry(key.get_hash()) {
+        let ((subject, prev), fresh) = match metrics.entry(key.get_hash()) {
             Entry::Occupied(entry) => (entry.into_mut(), false),
-            Entry::Vacant(entry) => (entry.insert((Self::metric_subject(key), curr)), false),
+            Entry::Vacant(entry) => (entry.insert((Self::metric_subject(key), curr)), true),
         };
-        let should_publish = curr != *prev || publish_all || new;
+        let should_publish = curr != *prev || publish_all || fresh;
 
         // Record the latest value.
         *prev = curr;
 
         // Publish.
         if should_publish {
-            Self::publish_metric(client, client_pending, subject.clone(), &curr);
+            Self::publish_metric(
+                client,
+                client_pending,
+                subject.clone(),
+                #[allow(clippy::cast_precision_loss)]
+                &Metric { timestamp_ms: now, value: curr as f64 },
+            );
         }
     }
 
@@ -229,35 +247,49 @@ impl NatsExporter {
         key: &Key,
         histogram: &Arc<AtomicBucketInstant<f64>>,
         publish_all: bool,
+        now: u128,
     ) {
-        let HistogramState {
-            distribution,
-            quantile_subjects,
-            count_subject,
-            sum_subject,
-            previous_count,
-        } = histograms.entry(key.get_hash()).or_insert_with(|| {
-            let quantiles = Arc::new(vec![
-                Quantile::new(0.0),
-                Quantile::new(0.50),
-                Quantile::new(0.90),
-                Quantile::new(0.99),
-                Quantile::new(0.999),
-                Quantile::new(1.0),
-            ]);
-            let metrics_subject = Self::metric_subject(key);
-
+        let (
             HistogramState {
-                quantile_subjects: quantiles
-                    .iter()
-                    .map(|quantile| format!("{metrics_subject}.{}", quantile.label()))
-                    .collect(),
-                distribution: Distribution::new_summary(quantiles, BUCKET_DURATION, BUCKET_COUNT),
-                count_subject: format!("{metrics_subject}.count"),
-                sum_subject: format!("{metrics_subject}.sum"),
-                previous_count: 0,
+                distribution,
+                quantile_subjects,
+                count_subject,
+                sum_subject,
+                previous_count,
+            },
+            fresh,
+        ) = match histograms.entry(key.get_hash()) {
+            Entry::Occupied(entry) => (entry.into_mut(), false),
+            Entry::Vacant(entry) => {
+                let quantiles = Arc::new(vec![
+                    Quantile::new(0.0),
+                    Quantile::new(0.50),
+                    Quantile::new(0.90),
+                    Quantile::new(0.99),
+                    Quantile::new(0.999),
+                    Quantile::new(1.0),
+                ]);
+                let metrics_subject = Self::metric_subject(key);
+
+                (
+                    entry.insert(HistogramState {
+                        quantile_subjects: quantiles
+                            .iter()
+                            .map(|quantile| format!("{metrics_subject}.{}", quantile.label()))
+                            .collect(),
+                        distribution: Distribution::new_summary(
+                            quantiles,
+                            BUCKET_DURATION,
+                            BUCKET_COUNT,
+                        ),
+                        count_subject: format!("{metrics_subject}.count"),
+                        sum_subject: format!("{metrics_subject}.sum"),
+                        previous_count: 0,
+                    }),
+                    true,
+                )
             }
-        });
+        };
 
         // Drain the histogram into our distribution.
         histogram.clear_with(|samples| distribution.record_samples(samples));
@@ -271,7 +303,7 @@ impl NatsExporter {
         // Check if we should publish.
         let count = snapshot.count();
         assert!(count >= *previous_count, "Count invariant broken (not monotonic)");
-        let should_publish = publish_all || count != *previous_count;
+        let should_publish = publish_all || fresh || count != *previous_count;
 
         // Update previous count.
         *previous_count = count;
@@ -287,7 +319,12 @@ impl NatsExporter {
 
             // Publish all metrics starting with the overview.
             for (subject, val) in overview.into_iter().chain(quantiles) {
-                Self::publish_metric(client, client_pending, subject.to_string(), &val);
+                Self::publish_metric(
+                    client,
+                    client_pending,
+                    subject.to_string(),
+                    &Metric { timestamp_ms: now, value: val },
+                );
             }
         }
     }
@@ -296,9 +333,9 @@ impl NatsExporter {
         client: &'static Client,
         client_pending: &FuturesUnordered<BoxFuture<'static, ()>>,
         subject: String,
-        val: &impl ToString,
+        val: &Metric,
     ) {
-        let val = val.to_string();
+        let val = serde_json::to_string(&val).unwrap();
 
         client_pending
             .push(async move { client.publish(subject, val.into()).await.unwrap() }.boxed());
@@ -321,4 +358,12 @@ struct HistogramState {
     count_subject: String,
     sum_subject: String,
     previous_count: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Metric {
+    #[serde(rename = "t")]
+    timestamp_ms: u128,
+    #[serde(rename = "v")]
+    value: f64,
 }
