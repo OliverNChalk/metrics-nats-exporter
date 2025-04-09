@@ -1,4 +1,5 @@
 mod atomic_storage;
+mod exporter;
 mod recorder;
 
 use std::thread::JoinHandle;
@@ -18,7 +19,7 @@ pub use tokio_util::sync::CancellationToken;
 ///
 /// # Errors
 ///
-/// Returns an error an failure to install the recorder.
+/// Errors on failure to install the recorder.
 pub fn install(
     cxl: CancellationToken,
     config: Config,
