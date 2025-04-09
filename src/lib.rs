@@ -35,10 +35,13 @@ pub struct Config {
     pub interval_max: Duration,
 }
 
+/// Possible failure while installing the NATS exporter.
 #[derive(Debug, Error)]
 pub enum InstallError {
+    /// Failed to set the global metrics recorder.
     #[error("Set recorder; err={0}")]
     SetRecorder(#[from] SetRecorderError<NatsRecorder>),
+    /// Failed to spawn the nats publisher worker thread.
     #[error("Spawn thread; err={0}")]
     SpawnThread(#[from] std::io::Error),
 }
