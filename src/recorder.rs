@@ -1,5 +1,5 @@
 use std::num::NonZeroU32;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -8,6 +8,7 @@ use async_nats::Client;
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
+use hashbrown::hash_map::Entry;
 use hashbrown::HashMap;
 use itertools::{izip, Itertools};
 use metrics::{Counter, Gauge, Histogram, Key, KeyName, Metadata, Recorder, SharedString, Unit};
@@ -141,8 +142,6 @@ impl NatsExporter {
     }
 
     fn tick(&mut self, interval_start: tokio::time::Instant) {
-        // TODO: Check if histograms need resetting.
-
         // Backoff if previous publish has not been processed yet.
         #[allow(clippy::arithmetic_side_effects)]
         if !self.client_pending.is_empty() {
@@ -167,35 +166,28 @@ impl NatsExporter {
     }
 
     fn publish_all(&mut self) {
-        // Counters.
         self.recorder.registry.visit_counters(|key, counter| {
-            // Record the latest value.
-            let curr = counter.load(Ordering::Relaxed);
-            let (subject, prev) = self
-                .metrics
-                .entry(key.get_hash())
-                .or_insert_with(|| (Self::metric_subject(key), curr));
-            *prev = curr;
-
-            // Publish.
-            Self::publish_metric(self.client, &self.client_pending, subject.clone(), &curr);
+            Self::handle_metric(
+                &mut self.metrics,
+                self.client,
+                &self.client_pending,
+                key,
+                counter,
+                true,
+            );
         });
 
-        // Gauges.
         self.recorder.registry.visit_gauges(|key, gauge| {
-            // Record the latest value.
-            let curr = gauge.load(Ordering::Relaxed);
-            let (subject, prev) = self
-                .metrics
-                .entry(key.get_hash())
-                .or_insert_with(|| (Self::metric_subject(key), curr));
-            *prev = curr;
-
-            // Publish.
-            Self::publish_metric(self.client, &self.client_pending, subject.clone(), &curr);
+            Self::handle_metric(
+                &mut self.metrics,
+                self.client,
+                &self.client_pending,
+                key,
+                gauge,
+                true,
+            );
         });
 
-        // Histograms.
         self.recorder.registry.visit_histograms(|key, histogram| {
             Self::handle_histogram(
                 &mut self.histograms,
@@ -210,33 +202,25 @@ impl NatsExporter {
 
     fn publish_changed(&mut self) {
         self.recorder.registry.visit_counters(|key, counter| {
-            // Check if the counter has changed.
-            let curr = counter.load(Ordering::Relaxed);
-            let (subject, prev) = self.metrics.entry(key.get_hash()).or_default();
-            if curr == *prev {
-                return;
-            }
-
-            // Record the latest value.
-            *prev = curr;
-
-            // Publish.
-            Self::publish_metric(self.client, &self.client_pending, subject.clone(), &curr);
+            Self::handle_metric(
+                &mut self.metrics,
+                self.client,
+                &self.client_pending,
+                key,
+                counter,
+                false,
+            );
         });
 
         self.recorder.registry.visit_gauges(|key, gauge| {
-            // Check if the gauge has changed.
-            let curr = gauge.load(Ordering::Relaxed);
-            let (subject, prev) = self.metrics.entry(key.get_hash()).or_default();
-            if curr == *prev {
-                return;
-            }
-
-            // Record the latest value.
-            *prev = curr;
-
-            // Publish.
-            Self::publish_metric(self.client, &self.client_pending, subject.clone(), &curr);
+            Self::handle_metric(
+                &mut self.metrics,
+                self.client,
+                &self.client_pending,
+                key,
+                gauge,
+                false,
+            );
         });
 
         self.recorder.registry.visit_histograms(|key, histogram| {
@@ -249,6 +233,33 @@ impl NatsExporter {
                 false,
             );
         });
+    }
+
+    fn handle_metric(
+        metrics: &mut HashMap<u64, (String, u64)>,
+        client: &'static Client,
+        client_pending: &FuturesUnordered<BoxFuture<'static, ()>>,
+        key: &Key,
+        metric: &Arc<AtomicU64>,
+        publish_all: bool,
+    ) {
+        // Load current value.
+        let curr = metric.load(Ordering::Relaxed);
+
+        // Check if the metric has changed.
+        let ((subject, prev), new) = match metrics.entry(key.get_hash()) {
+            Entry::Occupied(entry) => (entry.into_mut(), false),
+            Entry::Vacant(entry) => (entry.insert((Self::metric_subject(key), curr)), false),
+        };
+        let should_publish = curr != *prev || publish_all || new;
+
+        // Record the latest value.
+        *prev = curr;
+
+        // Publish.
+        if should_publish {
+            Self::publish_metric(client, &client_pending, subject.clone(), &curr);
+        }
     }
 
     fn handle_histogram(

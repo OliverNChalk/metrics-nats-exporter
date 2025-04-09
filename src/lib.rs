@@ -23,9 +23,13 @@ pub fn install(cxl: CancellationToken, config: Config) -> Result<JoinHandle<()>,
     NatsRecorder::install(cxl, config)
 }
 
+/// Configuration to control the NATS publishing.
 pub struct Config {
+    /// The NATS servers to connect to.
     pub nats_servers: Vec<ServerAddr>,
+    /// Metrics that have changed will be published this frequently.
     pub interval_min: Duration,
+    /// Metrics that have not changed will be published this frequently.
     pub interval_max: Duration,
 }
 
