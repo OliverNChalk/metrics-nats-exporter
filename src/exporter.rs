@@ -31,13 +31,17 @@ pub(crate) struct NatsExporter {
     config: Config,
 
     recorder: NatsRecorder,
-    metrics: HashMap<u64, (String, u64)>,
-    histograms: HashMap<u64, HistogramState>,
+    state: NatsExporterState,
     interval: tokio::time::Interval,
     last_publish_all: tokio::time::Instant,
+    consecutive_skipped: u64,
+}
+
+pub(crate) struct NatsExporterState {
+    metrics: HashMap<u64, (String, u64)>,
+    histograms: HashMap<u64, HistogramState>,
     client: &'static Client,
     client_pending: FuturesUnordered<BoxFuture<'static, ()>>,
-    consecutive_skipped: u64,
 }
 
 impl NatsExporter {
@@ -77,12 +81,14 @@ impl NatsExporter {
             cxl,
 
             recorder,
-            metrics: HashMap::default(),
-            histograms: HashMap::default(),
+            state: NatsExporterState {
+                metrics: HashMap::default(),
+                histograms: HashMap::default(),
+                client,
+                client_pending: FuturesUnordered::default(),
+            },
             interval,
             last_publish_all: tokio::time::Instant::now(),
-            client,
-            client_pending: FuturesUnordered::default(),
             consecutive_skipped: 0,
         }
     }
@@ -97,7 +103,7 @@ impl NatsExporter {
                 () = self.cxl.cancelled() => break,
                 now = self.interval.tick() => self.tick(now),
 
-                Some(()) = self.client_pending.next() => {},
+                Some(()) = self.state.client_pending.next() => {},
             }
         }
     }
@@ -105,7 +111,7 @@ impl NatsExporter {
     fn tick(&mut self, interval_start: tokio::time::Instant) {
         // Backoff if previous publish has not been processed yet.
         #[allow(clippy::arithmetic_side_effects)]
-        if !self.client_pending.is_empty() {
+        if !self.state.client_pending.is_empty() {
             self.consecutive_skipped += 1;
             warn!(self.consecutive_skipped, "NatsExporter not keeping up, skipping publish");
 
@@ -131,9 +137,8 @@ impl NatsExporter {
 
         self.recorder.registry.visit_counters(|key, counter| {
             Self::handle_metric(
-                &mut self.metrics,
-                self.client,
-                &self.client_pending,
+                &mut self.state,
+                self.config.metric_prefix.as_ref(),
                 key,
                 counter,
                 true,
@@ -143,9 +148,8 @@ impl NatsExporter {
 
         self.recorder.registry.visit_gauges(|key, gauge| {
             Self::handle_metric(
-                &mut self.metrics,
-                self.client,
-                &self.client_pending,
+                &mut self.state,
+                self.config.metric_prefix.as_ref(),
                 key,
                 gauge,
                 true,
@@ -155,9 +159,8 @@ impl NatsExporter {
 
         self.recorder.registry.visit_histograms(|key, histogram| {
             Self::handle_histogram(
-                &mut self.histograms,
-                self.client,
-                &self.client_pending,
+                &mut self.state,
+                self.config.metric_prefix.as_ref(),
                 key,
                 histogram,
                 true,
@@ -171,9 +174,8 @@ impl NatsExporter {
 
         self.recorder.registry.visit_counters(|key, counter| {
             Self::handle_metric(
-                &mut self.metrics,
-                self.client,
-                &self.client_pending,
+                &mut self.state,
+                self.config.metric_prefix.as_ref(),
                 key,
                 counter,
                 false,
@@ -183,9 +185,8 @@ impl NatsExporter {
 
         self.recorder.registry.visit_gauges(|key, gauge| {
             Self::handle_metric(
-                &mut self.metrics,
-                self.client,
-                &self.client_pending,
+                &mut self.state,
+                self.config.metric_prefix.as_ref(),
                 key,
                 gauge,
                 false,
@@ -195,9 +196,8 @@ impl NatsExporter {
 
         self.recorder.registry.visit_histograms(|key, histogram| {
             Self::handle_histogram(
-                &mut self.histograms,
-                self.client,
-                &self.client_pending,
+                &mut self.state,
+                self.config.metric_prefix.as_ref(),
                 key,
                 histogram,
                 false,
@@ -207,9 +207,8 @@ impl NatsExporter {
     }
 
     fn handle_metric(
-        metrics: &mut HashMap<u64, (String, u64)>,
-        client: &'static Client,
-        client_pending: &FuturesUnordered<BoxFuture<'static, ()>>,
+        NatsExporterState { metrics, client, client_pending, .. }: &mut NatsExporterState,
+        metric_prefix: Option<&String>,
         key: &Key,
         metric: &Arc<AtomicU64>,
         publish_all: bool,
@@ -221,7 +220,9 @@ impl NatsExporter {
         // Check if the metric has changed.
         let ((subject, prev), fresh) = match metrics.entry(key.get_hash()) {
             Entry::Occupied(entry) => (entry.into_mut(), false),
-            Entry::Vacant(entry) => (entry.insert((Self::metric_subject(key), curr)), true),
+            Entry::Vacant(entry) => {
+                (entry.insert((Self::metric_subject(metric_prefix, key), curr)), true)
+            }
         };
         let should_publish = curr != *prev || publish_all || fresh;
 
@@ -241,9 +242,8 @@ impl NatsExporter {
     }
 
     fn handle_histogram(
-        histograms: &mut HashMap<u64, HistogramState>,
-        client: &'static Client,
-        client_pending: &FuturesUnordered<BoxFuture<'static, ()>>,
+        NatsExporterState { histograms, client, client_pending, .. }: &mut NatsExporterState,
+        metric_prefix: Option<&String>,
         key: &Key,
         histogram: &Arc<AtomicBucketInstant<f64>>,
         publish_all: bool,
@@ -269,21 +269,21 @@ impl NatsExporter {
                     Quantile::new(0.999),
                     Quantile::new(1.0),
                 ]);
-                let metrics_subject = Self::metric_subject(key);
+                let metric_subject = Self::metric_subject(metric_prefix, key);
 
                 (
                     entry.insert(HistogramState {
                         quantile_subjects: quantiles
                             .iter()
-                            .map(|quantile| format!("{metrics_subject}.{}", quantile.label()))
+                            .map(|quantile| format!("{metric_subject}.{}", quantile.label()))
                             .collect(),
                         distribution: Distribution::new_summary(
                             quantiles,
                             BUCKET_DURATION,
                             BUCKET_COUNT,
                         ),
-                        count_subject: format!("{metrics_subject}.count"),
-                        sum_subject: format!("{metrics_subject}.sum"),
+                        count_subject: format!("{metric_subject}.count"),
+                        sum_subject: format!("{metric_subject}.sum"),
                         previous_count: 0,
                     }),
                     true,
@@ -341,9 +341,10 @@ impl NatsExporter {
             .push(async move { client.publish(subject, val.into()).await.unwrap() }.boxed());
     }
 
-    fn metric_subject(key: &Key) -> String {
+    fn metric_subject(metric_prefix: Option<&String>, key: &Key) -> String {
         format!(
-            "metric.host.{}.{}",
+            "{}.{}.{}",
+            metric_prefix.map_or("metric", |s| s.as_str()),
             key.name(),
             key.labels()
                 .map(|label| format!("{}={}", label.key(), label.value()))

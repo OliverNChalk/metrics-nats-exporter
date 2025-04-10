@@ -34,6 +34,8 @@ pub struct Config {
     pub interval_min: Duration,
     /// Metrics that have not changed will be published this frequently.
     pub interval_max: Duration,
+    /// Metric subjects will be prefixed with this.
+    pub metric_prefix: Option<String>,
 }
 
 /// Possible failure while installing the NATS exporter.
