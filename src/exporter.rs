@@ -221,7 +221,7 @@ impl NatsExporter {
         let ((subject, prev), fresh) = match metrics.entry(key.get_hash()) {
             Entry::Occupied(entry) => (entry.into_mut(), false),
             Entry::Vacant(entry) => {
-                (entry.insert((Self::metric_subject(metric_prefix, key), curr)), true)
+                (entry.insert((Self::metric_subject(metric_prefix, key, None), curr)), true)
             }
         };
         let should_publish = curr != *prev || publish_all || fresh;
@@ -269,21 +269,23 @@ impl NatsExporter {
                     Quantile::new(0.999),
                     Quantile::new(1.0),
                 ]);
-                let metric_subject = Self::metric_subject(metric_prefix, key);
+                let metric_subject = Self::metric_subject(metric_prefix, key, None);
 
                 (
                     entry.insert(HistogramState {
                         quantile_subjects: quantiles
                             .iter()
-                            .map(|quantile| format!("{metric_subject}.{}", quantile.label()))
+                            .map(|quantile| {
+                                format!("{metric_subject}.quantile={}", quantile.label())
+                            })
                             .collect(),
                         distribution: Distribution::new_summary(
                             quantiles,
                             BUCKET_DURATION,
                             BUCKET_COUNT,
                         ),
-                        count_subject: format!("{metric_subject}.count"),
-                        sum_subject: format!("{metric_subject}.sum"),
+                        count_subject: Self::metric_subject(metric_prefix, key, Some("count")),
+                        sum_subject: Self::metric_subject(metric_prefix, key, Some("sum")),
                         previous_count: 0,
                     }),
                     true,
@@ -341,11 +343,18 @@ impl NatsExporter {
             .push(async move { client.publish(subject, val.into()).await.unwrap() }.boxed());
     }
 
-    fn metric_subject(metric_prefix: Option<&String>, key: &Key) -> String {
+    fn metric_subject(
+        metric_prefix: Option<&String>,
+        key: &Key,
+        name_suffix: Option<&str>,
+    ) -> String {
         format!(
             "{}.{}.{}",
             metric_prefix.map_or("metric", |s| s.as_str()),
-            key.name(),
+            name_suffix
+                .map(|suffix| format!("{}_{suffix}", key.name()))
+                .as_deref()
+                .unwrap_or_else(|| key.name()),
             key.labels()
                 .map(|label| format!("{}={}", label.key(), label.value()))
                 .join(".")
@@ -367,4 +376,39 @@ struct Metric {
     timestamp_ms: u128,
     #[serde(rename = "v")]
     value: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use expect_test::expect;
+    use metrics::Label;
+
+    use super::*;
+
+    #[test]
+    fn metric_subject_simple() {
+        expect!["metric.my_metric.key=val"].assert_eq(&NatsExporter::metric_subject(
+            None,
+            &Key::from_parts("my_metric", vec![Label::new("key", "val")]),
+            None,
+        ));
+    }
+
+    #[test]
+    fn metric_subject_metric_prefix() {
+        expect!["metric.my-service.my_metric.key=val"].assert_eq(&NatsExporter::metric_subject(
+            Some(&"metric.my-service".to_string()),
+            &Key::from_parts("my_metric", vec![Label::new("key", "val")]),
+            None,
+        ));
+    }
+
+    #[test]
+    fn metric_subject_name_suffix() {
+        expect!["metric.my_metric_sum.key=val"].assert_eq(&NatsExporter::metric_subject(
+            None,
+            &Key::from_parts("my_metric", vec![Label::new("key", "val")]),
+            Some("sum"),
+        ));
+    }
 }
