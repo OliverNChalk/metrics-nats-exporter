@@ -349,15 +349,15 @@ impl NatsExporter {
         name_suffix: Option<&str>,
     ) -> String {
         format!(
-            "{}.{}.{}",
+            "{}.{}{}",
             metric_prefix.map_or("metric", |s| s.as_str()),
             name_suffix
                 .map(|suffix| format!("{}_{suffix}", key.name()))
                 .as_deref()
                 .unwrap_or_else(|| key.name()),
             key.labels()
-                .map(|label| format!("{}={}", label.key(), label.value()))
-                .join(".")
+                .map(|label| format!(".{}={}", label.key(), label.value()))
+                .join(""),
         )
     }
 }
