@@ -141,6 +141,7 @@ impl NatsExporter {
                 self.config.metric_prefix.as_ref(),
                 key,
                 counter,
+                U64OrF64::U64,
                 true,
                 now,
             );
@@ -152,6 +153,7 @@ impl NatsExporter {
                 self.config.metric_prefix.as_ref(),
                 key,
                 gauge,
+                |raw| U64OrF64::F64(f64::from_bits(raw)),
                 true,
                 now,
             );
@@ -178,6 +180,7 @@ impl NatsExporter {
                 self.config.metric_prefix.as_ref(),
                 key,
                 counter,
+                U64OrF64::U64,
                 false,
                 now,
             );
@@ -189,6 +192,7 @@ impl NatsExporter {
                 self.config.metric_prefix.as_ref(),
                 key,
                 gauge,
+                |raw| U64OrF64::F64(f64::from_bits(raw)),
                 false,
                 now,
             );
@@ -206,14 +210,17 @@ impl NatsExporter {
         });
     }
 
-    fn handle_metric(
+    fn handle_metric<T>(
         NatsExporterState { metrics, client, client_pending, .. }: &mut NatsExporterState,
         metric_prefix: Option<&String>,
         key: &Key,
         metric: &Arc<AtomicU64>,
+        convert: T,
         publish_all: bool,
         now: u128,
-    ) {
+    ) where
+        T: Fn(u64) -> U64OrF64,
+    {
         // Load current value.
         let curr = metric.load(Ordering::Relaxed);
 
@@ -236,7 +243,7 @@ impl NatsExporter {
                 client_pending,
                 subject.clone(),
                 #[allow(clippy::cast_precision_loss)]
-                &Metric { timestamp_ms: now, value: curr as f64 },
+                &Metric { timestamp_ms: now, value: convert(curr) },
             );
         }
     }
@@ -325,7 +332,7 @@ impl NatsExporter {
                     client,
                     client_pending,
                     subject.to_string(),
-                    &Metric { timestamp_ms: now, value: val },
+                    &Metric { timestamp_ms: now, value: U64OrF64::F64(val) },
                 );
             }
         }
@@ -375,7 +382,14 @@ struct Metric {
     #[serde(rename = "t")]
     timestamp_ms: u128,
     #[serde(rename = "v")]
-    value: f64,
+    value: U64OrF64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum U64OrF64 {
+    U64(u64),
+    F64(f64),
 }
 
 #[cfg(test)]
@@ -410,5 +424,23 @@ mod tests {
             &Key::from_parts("my_metric", vec![Label::new("key", "val")]),
             Some("sum"),
         ));
+    }
+
+    #[test]
+    fn serialize_metric_u64() {
+        let metric = Metric { timestamp_ms: 123, value: U64OrF64::U64(100) };
+
+        let serialized = serde_json::to_string(&metric).unwrap();
+
+        expect![[r#"{"t":123,"v":100}"#]].assert_eq(&serialized);
+    }
+
+    #[test]
+    fn serialize_metric_f64() {
+        let metric = Metric { timestamp_ms: 123, value: U64OrF64::F64(100.0) };
+
+        let serialized = serde_json::to_string(&metric).unwrap();
+
+        expect![[r#"{"t":123,"v":100.0}"#]].assert_eq(&serialized);
     }
 }
