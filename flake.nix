@@ -1,10 +1,7 @@
 # Based on: https://crane.dev/examples/quick-start-workspace.html
 
 {
-  inputs = {
-    crane.url = "github:ipetkov/crane";
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-  };
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
   outputs =
     {
