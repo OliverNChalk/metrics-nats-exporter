@@ -307,17 +307,21 @@ impl NatsExporter {
         let Distribution::Summary(summary, quantiles, sum) = &distribution else {
             panic!();
         };
-        let snapshot = summary.snapshot(quanta::Instant::now());
 
         // Check if we should publish.
-        let count = snapshot.count();
-        assert!(count >= *previous_count, "Count invariant broken (not monotonic)");
+        let count = summary.count();
+        assert!(
+            count >= *previous_count,
+            "Count invariant broken (not monotonic); prev={previous_count}; next={count}"
+        );
         let should_publish = publish_all || fresh || count != *previous_count;
 
         // Update previous count.
         *previous_count = count;
 
         if should_publish {
+            let snapshot = summary.snapshot(quanta::Instant::now());
+
             // Convert overview and quantiles to publishable metrics.
             #[allow(clippy::cast_precision_loss)]
             let overview = [(&*count_subject, count as f64), (sum_subject, *sum)];
