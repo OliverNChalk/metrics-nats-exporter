@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+/// Metric representation.
+///
+/// Metrics are serialized using this type into the NATS message body.
 #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Metric {
@@ -30,6 +33,7 @@ impl<'a> From<&'a Metric> for MetricBorrowed<'a> {
     }
 }
 
+/// Enumeration of possible metric variants.
 #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -39,6 +43,7 @@ pub enum MetricVariant {
     Histogram(Histogram),
 }
 
+/// Histogram summary.
 #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Histogram {
