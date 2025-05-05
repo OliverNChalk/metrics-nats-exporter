@@ -8,14 +8,22 @@ use serde_with::serde_as;
 /// This model complies with the [Vector.dev metric data model][0].
 ///
 /// [0]: https://vector.dev/docs/about/under-the-hood/architecture/data-model/metric
-// #[serde_as]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(from = "MetricVector", into = "MetricVector")]
 pub struct Metric {
     pub name: String,
     #[serde(flatten)]
     pub variant: MetricVariant,
     pub tags: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(from = "MetricVector", into = "MetricVector")]
+pub(crate) struct MetricBorrowed<'a> {
+    pub(crate) name: String,
+    #[serde(flatten)]
+    pub(crate) variant: MetricVariant,
+    #[serde(borrow)]
+    pub(crate) tags: BTreeMap<&'a str, &'a str>,
 }
 
 #[serde_as]
@@ -39,17 +47,18 @@ pub struct Histogram {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct MetricVector {
+struct MetricVector<'a> {
     name: String,
     #[serde(flatten)]
     variant: MetricVariant,
     #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<CounterKind>,
-    tags: BTreeMap<String, String>,
+    #[serde(borrow)]
+    tags: BTreeMap<&'a str, &'a str>,
 }
 
-impl From<Metric> for MetricVector {
-    fn from(value: Metric) -> Self {
+impl<'a> From<MetricBorrowed<'a>> for MetricVector<'a> {
+    fn from(value: MetricBorrowed<'a>) -> Self {
         MetricVector {
             name: value.name,
             variant: value.variant,
@@ -62,9 +71,9 @@ impl From<Metric> for MetricVector {
     }
 }
 
-impl From<MetricVector> for Metric {
-    fn from(value: MetricVector) -> Self {
-        Metric { name: value.name, variant: value.variant, tags: value.tags }
+impl<'a> From<MetricVector<'a>> for MetricBorrowed<'a> {
+    fn from(value: MetricVector<'a>) -> Self {
+        MetricBorrowed { name: value.name, variant: value.variant, tags: value.tags }
     }
 }
 

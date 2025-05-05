@@ -20,8 +20,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use crate::atomic_storage::AtomicBucketInstant;
+use crate::metric::MetricVariant;
 use crate::recorder::NatsRecorder;
-use crate::{Config, InstallError};
+use crate::{Config, InstallError, Metric};
 
 const BUCKET_COUNT: NonZeroU32 = NonZeroU32::new(3).unwrap();
 const BUCKET_DURATION: Duration = Duration::from_secs(20);
@@ -219,7 +220,7 @@ impl NatsExporter {
         publish_all: bool,
         now: u128,
     ) where
-        T: Fn(u64) -> U64OrF64,
+        T: Fn(u64) -> MetricVariant,
     {
         // Load current value.
         let curr = metric.load(Ordering::Relaxed);
@@ -243,7 +244,14 @@ impl NatsExporter {
                 client_pending,
                 subject.clone(),
                 #[allow(clippy::cast_precision_loss)]
-                &Metric { timestamp_ms: now, value: convert(curr) },
+                &Metric {
+                    name: todo!(),
+                    variant: convert(curr),
+                    tags: key
+                        .labels()
+                        .map(|label| (label.key(), label.value()))
+                        .collect(),
+                },
             );
         }
     }
@@ -360,15 +368,12 @@ impl NatsExporter {
         name_suffix: Option<&str>,
     ) -> String {
         format!(
-            "{}.{}{}",
+            "{}.{}",
             metric_prefix.map_or("metric", |s| s.as_str()),
             name_suffix
                 .map(|suffix| format!("{}_{suffix}", key.name()))
                 .as_deref()
                 .unwrap_or_else(|| key.name()),
-            key.labels()
-                .map(|label| format!(".{}={}", label.key(), label.value()))
-                .join(""),
         )
     }
 }
@@ -379,21 +384,6 @@ struct HistogramState {
     count_subject: String,
     sum_subject: String,
     previous_count: usize,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Metric {
-    #[serde(rename = "t")]
-    timestamp_ms: u128,
-    #[serde(rename = "v")]
-    value: U64OrF64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged)]
-enum U64OrF64 {
-    U64(u64),
-    F64(f64),
 }
 
 #[cfg(test)]
