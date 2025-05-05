@@ -21,7 +21,7 @@ use tracing::warn;
 
 use crate::atomic_storage::AtomicBucketInstant;
 use crate::recorder::NatsRecorder;
-use crate::{Config, InstallError};
+use crate::{Config, InstallError, Metric, U64OrF64};
 
 const BUCKET_COUNT: NonZeroU32 = NonZeroU32::new(3).unwrap();
 const BUCKET_DURATION: Duration = Duration::from_secs(20);
@@ -379,21 +379,6 @@ struct HistogramState {
     count_subject: String,
     sum_subject: String,
     previous_count: usize,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Metric {
-    #[serde(rename = "t")]
-    timestamp_ms: u128,
-    #[serde(rename = "v")]
-    value: U64OrF64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged)]
-enum U64OrF64 {
-    U64(u64),
-    F64(f64),
 }
 
 #[cfg(test)]
