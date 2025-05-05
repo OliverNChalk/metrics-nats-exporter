@@ -1,11 +1,13 @@
 mod atomic_storage;
 mod exporter;
+mod metric;
 mod recorder;
 
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 pub use async_nats::{Client, ServerAddr};
+pub use metric::Metric;
 use metrics::SetRecorderError;
 use recorder::NatsRecorder;
 use thiserror::Error;
