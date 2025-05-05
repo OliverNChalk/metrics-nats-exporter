@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn metric_subject_simple() {
-        expect!["metric.my_metric.key=val"].assert_eq(&NatsExporter::metric_subject(
+        expect!["metric.my_metric"].assert_eq(&NatsExporter::metric_subject(
             None,
             &Key::from_parts("my_metric", vec![Label::new("key", "val")]),
         ));
@@ -388,7 +388,7 @@ mod tests {
 
     #[test]
     fn metric_subject_metric_prefix() {
-        expect!["metric.my-service.my_metric.key=val"].assert_eq(&NatsExporter::metric_subject(
+        expect!["metric.my-service.my_metric"].assert_eq(&NatsExporter::metric_subject(
             Some(&"metric.my-service".to_string()),
             &Key::from_parts("my_metric", vec![Label::new("key", "val")]),
         ));
@@ -405,9 +405,18 @@ mod tests {
             ]),
         };
 
-        let serialized = serde_json::to_string(&metric).unwrap();
+        let serialized = serde_json::to_string_pretty(&metric).unwrap();
 
-        expect![[r#"{"t":123,"v":100}"#]].assert_eq(&serialized);
+        expect![[r#"
+            {
+              "timestamp_ms": 123,
+              "counter": 100,
+              "tags": {
+                "a": "0",
+                "b": "0"
+              }
+            }"#]]
+            .assert_eq(&serialized);
     }
 
     #[test]
@@ -421,8 +430,60 @@ mod tests {
             ]),
         };
 
-        let serialized = serde_json::to_string(&metric).unwrap();
+        let serialized = serde_json::to_string_pretty(&metric).unwrap();
 
-        expect![[r#"{"t":123,"v":100.0}"#]].assert_eq(&serialized);
+        expect![[r#"
+            {
+              "timestamp_ms": 123,
+              "gauge": 100.0,
+              "tags": {
+                "a": "0",
+                "b": "0"
+              }
+            }"#]]
+            .assert_eq(&serialized);
+    }
+
+    #[test]
+    fn serialize_histogram() {
+        let metric = MetricBorrowed {
+            timestamp_ms: 123,
+            variant: MetricVariant::Histogram(crate::Histogram {
+                count: 20,
+                sum: 100.5,
+                min: 0.12,
+                p50: 2.0,
+                p90: 10.1,
+                p99: 50.12,
+                p999: 100.0,
+                max: 1003.0,
+            }),
+            tags: &BTreeMap::from_iter([
+                ("a".to_string(), "0".to_string()),
+                ("b".to_string(), "0".to_string()),
+            ]),
+        };
+
+        let serialized = serde_json::to_string_pretty(&metric).unwrap();
+
+        expect![[r#"
+            {
+              "timestamp_ms": 123,
+              "histogram": {
+                "count": 20,
+                "sum": 100.5,
+                "min": 0.12,
+                "p50": 2.0,
+                "p90": 10.1,
+                "p99": 50.12,
+                "p999": 100.0,
+                "max": 1003.0
+              },
+              "tags": {
+                "a": "0",
+                "b": "0"
+              }
+            }"#]]
+            .assert_eq(&serialized);
     }
 }

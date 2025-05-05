@@ -35,3 +35,5 @@ tracing = "0.1.41"
 
 [dev-dependencies]
 expect-test = "1.5.1"
+proptest = "1.6.0"
+proptest-derive = "0.5.1"
