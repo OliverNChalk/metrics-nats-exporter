@@ -9,12 +9,12 @@ pub struct Metric {
     pub tags: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct MetricBorrowed<'a> {
     pub(crate) timestamp_ms: u128,
     pub(crate) variant: MetricVariant,
     #[serde(borrow)]
-    pub(crate) tags: BTreeMap<&'a str, &'a str>,
+    pub(crate) tags: &'a BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

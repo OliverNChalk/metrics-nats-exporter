@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -36,7 +37,7 @@ pub(crate) struct NatsExporter {
 }
 
 pub(crate) struct NatsExporterState {
-    metrics: HashMap<u64, (Subject, u64)>,
+    metrics: HashMap<u64, MetricState>,
     histograms: HashMap<u64, HistogramState>,
     client: &'static Client,
     client_pending: FuturesUnordered<BoxFuture<'static, ()>>,
@@ -223,16 +224,24 @@ impl NatsExporter {
         let curr = metric.load(Ordering::Relaxed);
 
         // Check if the metric has changed.
-        let ((subject, prev), fresh) = match metrics.entry(key.get_hash()) {
+        let (MetricState { subject, tags, previous }, fresh) = match metrics.entry(key.get_hash()) {
             Entry::Occupied(entry) => (entry.into_mut(), false),
-            Entry::Vacant(entry) => {
-                (entry.insert((Self::metric_subject(metric_prefix, key), curr)), true)
-            }
+            Entry::Vacant(entry) => (
+                entry.insert(MetricState {
+                    subject: Self::metric_subject(metric_prefix, key),
+                    tags: key
+                        .labels()
+                        .map(|label| (label.key().to_string(), label.value().to_string()))
+                        .collect(),
+                    previous: curr,
+                }),
+                true,
+            ),
         };
-        let should_publish = curr != *prev || publish_all || fresh;
+        let should_publish = curr != *previous || publish_all || fresh;
 
         // Record the latest value.
-        *prev = curr;
+        *previous = curr;
 
         // Publish.
         if should_publish {
@@ -240,14 +249,7 @@ impl NatsExporter {
                 client,
                 client_pending,
                 subject.clone(),
-                &MetricBorrowed {
-                    timestamp_ms: now,
-                    variant: convert(curr),
-                    tags: key
-                        .labels()
-                        .map(|label| (label.key(), label.value()))
-                        .collect(),
-                },
+                &MetricBorrowed { timestamp_ms: now, variant: convert(curr), tags },
             );
         }
     }
@@ -260,7 +262,7 @@ impl NatsExporter {
         publish_all: bool,
         now: u128,
     ) {
-        let (HistogramState { distribution, subject, previous_count }, fresh) =
+        let (HistogramState { subject, tags, distribution, previous_count }, fresh) =
             match histograms.entry(key.get_hash()) {
                 Entry::Occupied(entry) => (entry.into_mut(), false),
                 Entry::Vacant(entry) => {
@@ -275,12 +277,16 @@ impl NatsExporter {
 
                     (
                         entry.insert(HistogramState {
+                            subject: Self::metric_subject(metric_prefix, key),
+                            tags: key
+                                .labels()
+                                .map(|label| (label.key().to_string(), label.value().to_string()))
+                                .collect(),
                             distribution: Distribution::new_summary(
                                 quantiles,
                                 BUCKET_DURATION,
                                 BUCKET_COUNT,
                             ),
-                            subject: Self::metric_subject(metric_prefix, key),
                             previous_count: 0,
                         }),
                         true,
@@ -327,10 +333,7 @@ impl NatsExporter {
                         p999: snapshot.quantile(0.999).unwrap_or(0.0),
                         max: snapshot.quantile(1.0).unwrap_or(0.0),
                     }),
-                    tags: key
-                        .labels()
-                        .map(|label| (label.key(), label.value()))
-                        .collect(),
+                    tags,
                 },
             );
         }
@@ -353,9 +356,16 @@ impl NatsExporter {
     }
 }
 
-struct HistogramState {
-    distribution: Distribution,
+struct MetricState {
     subject: Subject,
+    tags: BTreeMap<String, String>,
+    previous: u64,
+}
+
+struct HistogramState {
+    subject: Subject,
+    tags: BTreeMap<String, String>,
+    distribution: Distribution,
     previous_count: usize,
 }
 
@@ -389,7 +399,10 @@ mod tests {
         let metric = MetricBorrowed {
             timestamp_ms: 123,
             variant: MetricVariant::Counter(100),
-            tags: BTreeMap::from_iter([("a", "0"), ("b", "0")]),
+            tags: &BTreeMap::from_iter([
+                ("a".to_string(), "0".to_string()),
+                ("b".to_string(), "0".to_string()),
+            ]),
         };
 
         let serialized = serde_json::to_string(&metric).unwrap();
@@ -402,7 +415,10 @@ mod tests {
         let metric = MetricBorrowed {
             timestamp_ms: 123,
             variant: MetricVariant::Gauge(100.0),
-            tags: BTreeMap::from_iter([("a", "0"), ("b", "0")]),
+            tags: &BTreeMap::from_iter([
+                ("a".to_string(), "0".to_string()),
+                ("b".to_string(), "0".to_string()),
+            ]),
         };
 
         let serialized = serde_json::to_string(&metric).unwrap();
