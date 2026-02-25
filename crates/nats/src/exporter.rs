@@ -256,7 +256,7 @@ impl NatsExporter {
 
         // Publish our distribution.
         let Distribution::Summary(summary, _, sum) = &distribution else {
-            panic!();
+            unreachable!();
         };
 
         // Check if we should publish.
