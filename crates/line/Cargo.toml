@@ -22,4 +22,6 @@ tokio-util.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+dotenvy.workspace = true
 expect-test.workspace = true
+tracing-subscriber.workspace = true

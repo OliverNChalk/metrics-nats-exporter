@@ -42,6 +42,7 @@ pub(crate) struct LineExporterState {
     histograms: HashMap<u64, HistogramState>,
     http_client: Client,
     write_url: String,
+    auth_header: Option<String>,
     pending_request: Option<tokio::task::JoinHandle<()>>,
     consecutive_failures: Arc<AtomicU32>,
 }
@@ -76,6 +77,7 @@ impl LineExporter {
         flush_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         let write_url = build_write_url(&config);
+        let auth_header = build_auth_header(&config);
         let http_client = Client::new();
 
         LineExporter {
@@ -88,6 +90,7 @@ impl LineExporter {
                 histograms: HashMap::default(),
                 http_client,
                 write_url,
+                auth_header,
                 pending_request: None,
                 consecutive_failures: Arc::new(AtomicU32::new(0)),
             },
@@ -163,10 +166,15 @@ impl LineExporter {
         let body = std::mem::take(&mut self.buffer);
         let client = self.state.http_client.clone();
         let url = self.state.write_url.clone();
+        let auth_header = self.state.auth_header.clone();
         let consecutive_failures = self.state.consecutive_failures.clone();
 
         self.state.pending_request = Some(tokio::spawn(async move {
-            match client.post(&url).body(body).send().await {
+            let mut req = client.post(&url).body(body);
+            if let Some(auth) = &auth_header {
+                req = req.header("Authorization", auth);
+            }
+            match req.send().await {
                 Ok(rep) if rep.status().is_success() => {
                     consecutive_failures.store(0, Ordering::Relaxed);
                 }
@@ -382,6 +390,7 @@ fn build_write_url(config: &Config) -> String {
         .append_pair("db", &config.database)
         .append_pair("precision", "ns");
 
+    // Also include u/p query params for InfluxDB v1 OSS compatibility.
     if let Some(username) = &config.username {
         url.query_pairs_mut().append_pair("u", username);
     }
@@ -390,6 +399,14 @@ fn build_write_url(config: &Config) -> String {
     }
 
     url.into()
+}
+
+fn build_auth_header(config: &Config) -> Option<String> {
+    match (&config.username, &config.password) {
+        (Some(username), Some(password)) => Some(format!("Token {username}:{password}")),
+        (None, Some(token)) => Some(format!("Token {token}")),
+        _ => None,
+    }
 }
 
 fn metric_name(prefix: Option<&str>, key: &Key) -> String {
@@ -474,5 +491,40 @@ mod tests {
 
         expect!["http://localhost:8086/write?db=mydb&precision=ns&u=admin&p=secret"]
             .assert_eq(&build_write_url(&config));
+        expect!["Token admin:secret"].assert_eq(&build_auth_header(&config).unwrap());
+    }
+
+    #[test]
+    fn build_auth_header_token_only() {
+        let config = Config {
+            interval_min: Duration::from_secs(1),
+            interval_max: Duration::from_secs(60),
+            flush_interval: Duration::from_secs(5),
+            endpoint: "http://localhost:8086".to_string(),
+            database: "mydb".to_string(),
+            username: None,
+            password: Some("my-api-token".to_string()),
+            metric_prefix: None,
+            default_tags: BTreeMap::new(),
+        };
+
+        expect!["Token my-api-token"].assert_eq(&build_auth_header(&config).unwrap());
+    }
+
+    #[test]
+    fn build_auth_header_none() {
+        let config = Config {
+            interval_min: Duration::from_secs(1),
+            interval_max: Duration::from_secs(60),
+            flush_interval: Duration::from_secs(5),
+            endpoint: "http://localhost:8086".to_string(),
+            database: "mydb".to_string(),
+            username: None,
+            password: None,
+            metric_prefix: None,
+            default_tags: BTreeMap::new(),
+        };
+
+        assert!(build_auth_header(&config).is_none());
     }
 }
