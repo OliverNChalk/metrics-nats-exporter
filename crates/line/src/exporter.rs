@@ -274,23 +274,23 @@ impl LineExporter {
         // Write to buffer.
         if should_publish {
             match convert(curr) {
-                MetricValue::Counter(v) => {
+                MetricValue::Counter(val) => {
                     crate::line_protocol::write_counter(
                         buffer,
                         name,
                         tags,
                         &config.default_tags,
-                        v,
+                        val,
                         now,
                     );
                 }
-                MetricValue::Gauge(v) => {
+                MetricValue::Gauge(val) => {
                     crate::line_protocol::write_gauge(
                         buffer,
                         name,
                         tags,
                         &config.default_tags,
-                        v,
+                        val,
                         now,
                     );
                 }

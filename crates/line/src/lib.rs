@@ -21,10 +21,7 @@ pub use tokio_util::sync::CancellationToken;
 /// # Errors
 ///
 /// Errors on failure to install the recorder.
-pub fn install(
-    cxl: CancellationToken,
-    config: Config,
-) -> Result<JoinHandle<()>, InstallError> {
+pub fn install(cxl: CancellationToken, config: Config) -> Result<JoinHandle<()>, InstallError> {
     LineRecorder::install(cxl, config)
 }
 
