@@ -291,7 +291,6 @@ impl LineExporter {
                 MetricValue::Counter(v) => {
                     crate::line_protocol::write_counter(
                         buffer,
-                        None, // prefix already baked into `name`
                         name,
                         tags,
                         &config.default_tags,
@@ -302,7 +301,6 @@ impl LineExporter {
                 MetricValue::Gauge(v) => {
                     crate::line_protocol::write_gauge(
                         buffer,
-                        None,
                         name,
                         tags,
                         &config.default_tags,
@@ -379,7 +377,6 @@ impl LineExporter {
 
             crate::line_protocol::write_histogram(
                 buffer,
-                None, // prefix already baked into `name`
                 name,
                 tags,
                 &config.default_tags,

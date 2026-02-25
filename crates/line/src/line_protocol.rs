@@ -14,21 +14,19 @@ pub(crate) struct HistogramSnapshot {
 
 pub(crate) fn write_counter(
     buf: &mut String,
-    prefix: Option<&str>,
     name: &str,
     key_tags: &BTreeMap<String, String>,
     default_tags: &BTreeMap<String, String>,
     value: u64,
     timestamp_ns: u128,
 ) {
-    write_measurement(buf, prefix, name);
+    escape_measurement(buf, name);
     write_tags(buf, default_tags, key_tags);
     let _ = writeln!(buf, " value={value}u {timestamp_ns}");
 }
 
 pub(crate) fn write_gauge(
     buf: &mut String,
-    prefix: Option<&str>,
     name: &str,
     key_tags: &BTreeMap<String, String>,
     default_tags: &BTreeMap<String, String>,
@@ -39,14 +37,13 @@ pub(crate) fn write_gauge(
         return;
     }
 
-    write_measurement(buf, prefix, name);
+    escape_measurement(buf, name);
     write_tags(buf, default_tags, key_tags);
     let _ = writeln!(buf, " value={value} {timestamp_ns}");
 }
 
 pub(crate) fn write_histogram(
     buf: &mut String,
-    prefix: Option<&str>,
     name: &str,
     key_tags: &BTreeMap<String, String>,
     default_tags: &BTreeMap<String, String>,
@@ -61,21 +58,13 @@ pub(crate) fn write_histogram(
         return;
     }
 
-    write_measurement(buf, prefix, name);
+    escape_measurement(buf, name);
     write_tags(buf, default_tags, key_tags);
     let _ = writeln!(
         buf,
         " count={count}u,sum={sum},min={min},p50={p50},p90={p90},p99={p99},p999={p999},max={max} \
          {timestamp_ns}",
     );
-}
-
-fn write_measurement(buf: &mut String, prefix: Option<&str>, name: &str) {
-    if let Some(p) = prefix {
-        escape_measurement(buf, p);
-        buf.push('.');
-    }
-    escape_measurement(buf, name);
 }
 
 fn write_tags(
@@ -170,8 +159,7 @@ mod tests {
         let mut buf = String::new();
         write_counter(
             &mut buf,
-            Some("myapp"),
-            "requests",
+            "myapp.requests",
             &sample_tags(),
             &empty_tags(),
             42,
@@ -184,7 +172,7 @@ mod tests {
     #[test]
     fn counter_no_prefix() {
         let mut buf = String::new();
-        write_counter(&mut buf, None, "requests", &empty_tags(), &empty_tags(), 100, 1_000);
+        write_counter(&mut buf, "requests", &empty_tags(), &empty_tags(), 100, 1_000);
         expect!["requests value=100u 1000\n"].assert_eq(&buf);
     }
 
@@ -193,8 +181,7 @@ mod tests {
         let mut buf = String::new();
         write_gauge(
             &mut buf,
-            Some("myapp"),
-            "temperature",
+            "myapp.temperature",
             &sample_tags(),
             &empty_tags(),
             23.5,
@@ -207,30 +194,14 @@ mod tests {
     #[test]
     fn gauge_nan_skipped() {
         let mut buf = String::new();
-        write_gauge(
-            &mut buf,
-            Some("myapp"),
-            "temperature",
-            &empty_tags(),
-            &empty_tags(),
-            f64::NAN,
-            1_000,
-        );
+        write_gauge(&mut buf, "temperature", &empty_tags(), &empty_tags(), f64::NAN, 1_000);
         expect![""].assert_eq(&buf);
     }
 
     #[test]
     fn gauge_inf_skipped() {
         let mut buf = String::new();
-        write_gauge(
-            &mut buf,
-            Some("myapp"),
-            "temperature",
-            &empty_tags(),
-            &empty_tags(),
-            f64::INFINITY,
-            1_000,
-        );
+        write_gauge(&mut buf, "temperature", &empty_tags(), &empty_tags(), f64::INFINITY, 1_000);
         expect![""].assert_eq(&buf);
     }
 
@@ -239,8 +210,7 @@ mod tests {
         let mut buf = String::new();
         write_histogram(
             &mut buf,
-            Some("myapp"),
-            "latency",
+            "myapp.latency",
             &sample_tags(),
             &empty_tags(),
             &HistogramSnapshot {
@@ -268,7 +238,6 @@ mod tests {
         let mut buf = String::new();
         write_histogram(
             &mut buf,
-            Some("myapp"),
             "latency",
             &empty_tags(),
             &empty_tags(),
@@ -290,15 +259,7 @@ mod tests {
     #[test]
     fn escape_measurement_special_chars() {
         let mut buf = String::new();
-        write_counter(
-            &mut buf,
-            Some("my app"),
-            "req,count",
-            &empty_tags(),
-            &empty_tags(),
-            1,
-            1_000,
-        );
+        write_counter(&mut buf, "my app.req,count", &empty_tags(), &empty_tags(), 1, 1_000);
         expect!["my\\ app.req\\,count value=1u 1000\n"].assert_eq(&buf);
     }
 
@@ -306,7 +267,7 @@ mod tests {
     fn escape_tag_special_chars() {
         let mut buf = String::new();
         let tags = BTreeMap::from_iter([("host name".to_string(), "server=01,a".to_string())]);
-        write_counter(&mut buf, None, "m", &tags, &empty_tags(), 1, 1_000);
+        write_counter(&mut buf, "m", &tags, &empty_tags(), 1, 1_000);
         expect!["m,host\\ name=server\\=01\\,a value=1u 1000\n"].assert_eq(&buf);
     }
 
@@ -315,7 +276,7 @@ mod tests {
         let mut buf = String::new();
         let defaults = BTreeMap::from_iter([("host".to_string(), "default-host".to_string())]);
         let key_tags = BTreeMap::from_iter([("host".to_string(), "override-host".to_string())]);
-        write_counter(&mut buf, None, "m", &key_tags, &defaults, 1, 1_000);
+        write_counter(&mut buf, "m", &key_tags, &defaults, 1, 1_000);
         expect!["m,host=override-host value=1u 1000\n"].assert_eq(&buf);
     }
 
@@ -330,21 +291,21 @@ mod tests {
             ("b".to_string(), "2".to_string()),
             ("d".to_string(), "4".to_string()),
         ]);
-        write_counter(&mut buf, None, "m", &key_tags, &defaults, 1, 1_000);
+        write_counter(&mut buf, "m", &key_tags, &defaults, 1, 1_000);
         expect!["m,a=1,b=2,c=3,d=4 value=1u 1000\n"].assert_eq(&buf);
     }
 
     #[test]
     fn no_tags() {
         let mut buf = String::new();
-        write_counter(&mut buf, None, "m", &empty_tags(), &empty_tags(), 1, 1_000);
+        write_counter(&mut buf, "m", &empty_tags(), &empty_tags(), 1, 1_000);
         expect!["m value=1u 1000\n"].assert_eq(&buf);
     }
 
     #[test]
     fn backslash_in_measurement() {
         let mut buf = String::new();
-        write_counter(&mut buf, None, "path\\metric", &empty_tags(), &empty_tags(), 1, 1_000);
+        write_counter(&mut buf, "path\\metric", &empty_tags(), &empty_tags(), 1, 1_000);
         expect!["path\\\\metric value=1u 1000\n"].assert_eq(&buf);
     }
 
@@ -352,15 +313,15 @@ mod tests {
     fn backslash_in_tag() {
         let mut buf = String::new();
         let tags = BTreeMap::from_iter([("k\\ey".to_string(), "v\\al".to_string())]);
-        write_counter(&mut buf, None, "m", &tags, &empty_tags(), 1, 1_000);
+        write_counter(&mut buf, "m", &tags, &empty_tags(), 1, 1_000);
         expect!["m,k\\\\ey=v\\\\al value=1u 1000\n"].assert_eq(&buf);
     }
 
     #[test]
     fn multiple_writes_accumulate() {
         let mut buf = String::new();
-        write_counter(&mut buf, None, "a", &empty_tags(), &empty_tags(), 1, 100);
-        write_gauge(&mut buf, None, "b", &empty_tags(), &empty_tags(), 2.5, 200);
+        write_counter(&mut buf, "a", &empty_tags(), &empty_tags(), 1, 100);
+        write_gauge(&mut buf, "b", &empty_tags(), &empty_tags(), 2.5, 200);
         expect![[r#"
             a value=1u 100
             b value=2.5 200
