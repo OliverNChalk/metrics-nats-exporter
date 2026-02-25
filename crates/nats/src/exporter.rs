@@ -93,7 +93,7 @@ impl NatsExporter {
     }
 
     async fn run(mut self) {
-        self.publish_all();
+        self.publish(true);
 
         loop {
             tokio::select! {
@@ -120,16 +120,14 @@ impl NatsExporter {
         self.consecutive_skipped = 0;
 
         // Determine if we should perform a full publish.
-        match interval_start - self.last_publish_all > self.config.interval_max {
-            true => {
-                self.publish_all();
-                self.last_publish_all = interval_start;
-            }
-            false => self.publish_changed(),
+        let publish_all = interval_start - self.last_publish_all > self.config.interval_max;
+        if publish_all {
+            self.last_publish_all = interval_start;
         }
+        self.publish(publish_all);
     }
 
-    fn publish_all(&mut self) {
+    fn publish(&mut self, publish_all: bool) {
         let now = UNIX_EPOCH.elapsed().unwrap().as_millis();
 
         self.recorder.registry.visit_counters(|key, counter| {
@@ -139,7 +137,7 @@ impl NatsExporter {
                 key,
                 counter,
                 MetricVariant::Counter,
-                true,
+                publish_all,
                 now,
             );
         });
@@ -151,7 +149,7 @@ impl NatsExporter {
                 key,
                 gauge,
                 |raw| MetricVariant::Gauge(f64::from_bits(raw)),
-                true,
+                publish_all,
                 now,
             );
         });
@@ -162,46 +160,7 @@ impl NatsExporter {
                 self.config.metric_prefix.as_ref(),
                 key,
                 histogram,
-                true,
-                now,
-            );
-        });
-    }
-
-    fn publish_changed(&mut self) {
-        let now = UNIX_EPOCH.elapsed().unwrap().as_millis();
-
-        self.recorder.registry.visit_counters(|key, counter| {
-            Self::handle_metric(
-                &mut self.state,
-                self.config.metric_prefix.as_ref(),
-                key,
-                counter,
-                MetricVariant::Counter,
-                false,
-                now,
-            );
-        });
-
-        self.recorder.registry.visit_gauges(|key, gauge| {
-            Self::handle_metric(
-                &mut self.state,
-                self.config.metric_prefix.as_ref(),
-                key,
-                gauge,
-                |raw| MetricVariant::Gauge(f64::from_bits(raw)),
-                false,
-                now,
-            );
-        });
-
-        self.recorder.registry.visit_histograms(|key, histogram| {
-            Self::handle_histogram(
-                &mut self.state,
-                self.config.metric_prefix.as_ref(),
-                key,
-                histogram,
-                false,
+                publish_all,
                 now,
             );
         });

@@ -96,7 +96,7 @@ impl LineExporter {
     }
 
     async fn run(mut self) {
-        self.collect_all();
+        self.collect_metrics(true);
 
         loop {
             tokio::select! {
@@ -111,13 +111,11 @@ impl LineExporter {
 
     fn tick(&mut self, interval_start: tokio::time::Instant) {
         // Determine if we should perform a full collection.
-        match interval_start - self.last_publish_all > self.config.interval_max {
-            true => {
-                self.collect_all();
-                self.last_publish_all = interval_start;
-            }
-            false => self.collect_changed(),
+        let publish_all = interval_start - self.last_publish_all > self.config.interval_max;
+        if publish_all {
+            self.last_publish_all = interval_start;
         }
+        self.collect_metrics(publish_all);
     }
 
     fn flush(&mut self) {
@@ -164,7 +162,7 @@ impl LineExporter {
         }));
     }
 
-    fn collect_all(&mut self) {
+    fn collect_metrics(&mut self, publish_all: bool) {
         let now = UNIX_EPOCH.elapsed().unwrap().as_nanos();
 
         self.recorder.registry.visit_counters(|key, counter| {
@@ -175,7 +173,7 @@ impl LineExporter {
                 key,
                 counter,
                 MetricValue::Counter,
-                true,
+                publish_all,
                 now,
             );
         });
@@ -188,7 +186,7 @@ impl LineExporter {
                 key,
                 gauge,
                 |raw| MetricValue::Gauge(f64::from_bits(raw)),
-                true,
+                publish_all,
                 now,
             );
         });
@@ -200,49 +198,7 @@ impl LineExporter {
                 &self.config,
                 key,
                 histogram,
-                true,
-                now,
-            );
-        });
-    }
-
-    fn collect_changed(&mut self) {
-        let now = UNIX_EPOCH.elapsed().unwrap().as_nanos();
-
-        self.recorder.registry.visit_counters(|key, counter| {
-            Self::handle_metric(
-                &mut self.state,
-                &mut self.buffer,
-                &self.config,
-                key,
-                counter,
-                MetricValue::Counter,
-                false,
-                now,
-            );
-        });
-
-        self.recorder.registry.visit_gauges(|key, gauge| {
-            Self::handle_metric(
-                &mut self.state,
-                &mut self.buffer,
-                &self.config,
-                key,
-                gauge,
-                |raw| MetricValue::Gauge(f64::from_bits(raw)),
-                false,
-                now,
-            );
-        });
-
-        self.recorder.registry.visit_histograms(|key, histogram| {
-            Self::handle_histogram(
-                &mut self.state,
-                &mut self.buffer,
-                &self.config,
-                key,
-                histogram,
-                false,
+                publish_all,
                 now,
             );
         });
