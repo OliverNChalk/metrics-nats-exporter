@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, UNIX_EPOCH};
@@ -35,8 +35,6 @@ pub(crate) struct LineExporter {
     buffer: String,
 }
 
-const MAX_CONSECUTIVE_FAILURES: u32 = 3;
-
 pub(crate) struct LineExporterState {
     metrics: HashMap<u64, MetricState>,
     histograms: HashMap<u64, HistogramState>,
@@ -44,7 +42,6 @@ pub(crate) struct LineExporterState {
     write_url: String,
     auth_header: Option<String>,
     pending_request: Option<tokio::task::JoinHandle<()>>,
-    consecutive_failures: Arc<AtomicU32>,
 }
 
 impl LineExporter {
@@ -92,7 +89,6 @@ impl LineExporter {
                 write_url,
                 auth_header,
                 pending_request: None,
-                consecutive_failures: Arc::new(AtomicU32::new(0)),
             },
             tick_interval,
             flush_interval,
@@ -149,25 +145,11 @@ impl LineExporter {
         // Reset consecutive skip counter.
         self.consecutive_skipped = 0;
 
-        // Drop buffer if too many consecutive write failures.
-        let failures = self.state.consecutive_failures.load(Ordering::Relaxed);
-        if failures >= MAX_CONSECUTIVE_FAILURES {
-            let dropped_bytes = self.buffer.len();
-            self.buffer.clear();
-            warn!(
-                failures,
-                dropped_bytes, "LineExporter dropping buffer after consecutive write failures"
-            );
-
-            return;
-        }
-
         // Take the buffer and send it.
         let body = std::mem::take(&mut self.buffer);
         let client = self.state.http_client.clone();
         let url = self.state.write_url.clone();
         let auth_header = self.state.auth_header.clone();
-        let consecutive_failures = self.state.consecutive_failures.clone();
 
         self.state.pending_request = Some(tokio::spawn(async move {
             let mut req = client.post(&url).body(body);
@@ -175,17 +157,13 @@ impl LineExporter {
                 req = req.header("Authorization", auth);
             }
             match req.send().await {
-                Ok(rep) if rep.status().is_success() => {
-                    consecutive_failures.store(0, Ordering::Relaxed);
-                }
+                Ok(rep) if rep.status().is_success() => {}
                 Ok(rep) => {
-                    consecutive_failures.fetch_add(1, Ordering::Relaxed);
                     let status = rep.status();
                     let body = rep.text().await.unwrap_or_default();
                     warn!(%status, %body, "InfluxDB write failed");
                 }
                 Err(err) => {
-                    consecutive_failures.fetch_add(1, Ordering::Relaxed);
                     warn!(%err, "InfluxDB write request failed");
                 }
             }
