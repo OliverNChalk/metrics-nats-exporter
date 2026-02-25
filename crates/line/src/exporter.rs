@@ -379,7 +379,6 @@ fn build_write_url(config: &Config) -> String {
 
 fn build_auth_header(config: &Config) -> Option<String> {
     match (&config.username, &config.password) {
-        (Some(username), Some(password)) => Some(format!("Token {username}:{password}")),
         (None, Some(token)) => Some(format!("Token {token}")),
         _ => None,
     }
@@ -467,7 +466,7 @@ mod tests {
 
         expect!["http://localhost:8086/write?db=mydb&precision=ns&u=admin&p=secret"]
             .assert_eq(&build_write_url(&config));
-        expect!["Token admin:secret"].assert_eq(&build_auth_header(&config).unwrap());
+        assert_eq!(build_auth_header(&config), None);
     }
 
     #[test]
@@ -484,6 +483,7 @@ mod tests {
             default_tags: BTreeMap::new(),
         };
 
+        expect!["http://localhost:8086/write?db=mydb&precision=ns"].assert_eq(&build_write_url(&config));
         expect!["Token my-api-token"].assert_eq(&build_auth_header(&config).unwrap());
     }
 
