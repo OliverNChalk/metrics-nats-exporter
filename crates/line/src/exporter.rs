@@ -369,10 +369,8 @@ fn build_write_url(config: &Config) -> String {
         .append_pair("precision", "ns");
 
     // Also include u/p query params for InfluxDB v1 OSS compatibility.
-    if let Some(username) = &config.username {
+    if let (Some(username), Some(password)) = (&config.username, &config.password) {
         url.query_pairs_mut().append_pair("u", username);
-    }
-    if let Some(password) = &config.password {
         url.query_pairs_mut().append_pair("p", password);
     }
 
