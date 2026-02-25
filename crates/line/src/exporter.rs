@@ -137,6 +137,7 @@ impl LineExporter {
                 self.consecutive_skipped,
                 "LineExporter flush skipped, previous request still in-flight"
             );
+
             return;
         }
 
