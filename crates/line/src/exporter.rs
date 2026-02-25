@@ -353,18 +353,21 @@ impl LineExporter {
 }
 
 fn build_write_url(config: &Config) -> String {
-    let mut url = format!("{}/write?db={}&precision=ns", config.endpoint, config.database);
+    let mut url =
+        reqwest::Url::parse(&format!("{}/write", config.endpoint)).expect("invalid endpoint URL");
+
+    url.query_pairs_mut()
+        .append_pair("db", &config.database)
+        .append_pair("precision", "ns");
 
     if let Some(username) = &config.username {
-        url.push_str("&u=");
-        url.push_str(username);
+        url.query_pairs_mut().append_pair("u", username);
     }
     if let Some(password) = &config.password {
-        url.push_str("&p=");
-        url.push_str(password);
+        url.query_pairs_mut().append_pair("p", password);
     }
 
-    url
+    url.into()
 }
 
 fn metric_name(prefix: Option<&str>, key: &Key) -> String {
