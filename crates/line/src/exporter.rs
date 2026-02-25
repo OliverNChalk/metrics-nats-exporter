@@ -111,7 +111,6 @@ impl LineExporter {
 
     fn tick(&mut self, interval_start: tokio::time::Instant) {
         // Determine if we should perform a full collection.
-        #[allow(clippy::arithmetic_side_effects)]
         match interval_start - self.last_publish_all > self.config.interval_max {
             true => {
                 self.collect_all();
@@ -133,10 +132,7 @@ impl LineExporter {
             .as_ref()
             .is_some_and(|h| !h.is_finished())
         {
-            #[allow(clippy::arithmetic_side_effects)]
-            {
-                self.consecutive_skipped += 1;
-            }
+            self.consecutive_skipped += 1;
             warn!(
                 self.consecutive_skipped,
                 "LineExporter flush skipped, previous request still in-flight"

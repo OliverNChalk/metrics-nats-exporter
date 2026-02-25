@@ -109,7 +109,6 @@ impl NatsExporter {
 
     fn tick(&mut self, interval_start: tokio::time::Instant) {
         // Backoff if previous publish has not been processed yet.
-        #[allow(clippy::arithmetic_side_effects)]
         if !self.state.client_pending.is_empty() {
             self.consecutive_skipped += 1;
             warn!(self.consecutive_skipped, "NatsExporter not keeping up, skipping publish");
@@ -121,7 +120,6 @@ impl NatsExporter {
         self.consecutive_skipped = 0;
 
         // Determine if we should perform a full publish.
-        #[allow(clippy::arithmetic_side_effects)]
         match interval_start - self.last_publish_all > self.config.interval_max {
             true => {
                 self.publish_all();
