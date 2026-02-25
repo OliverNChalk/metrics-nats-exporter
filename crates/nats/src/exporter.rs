@@ -281,7 +281,7 @@ impl NatsExporter {
                 &MetricBorrowed {
                     timestamp_ms: now,
                     variant: MetricVariant::Histogram(crate::Histogram {
-                        count: count as u64,
+                        count: u64::try_from(count).unwrap(),
                         sum: *sum,
                         min: snapshot.quantile(0.0).unwrap_or(0.0),
                         p50: snapshot.quantile(0.50).unwrap_or(0.0),
