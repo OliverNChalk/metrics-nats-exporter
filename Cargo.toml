@@ -29,6 +29,7 @@ trivially_copy_pass_by_ref = "warn"
 
 [workspace.dependencies]
 async-nats = "<1.0.0"
+dotenvy = "0.15"
 expect-test = "1.5.1"
 futures = "0.3.31"
 hashbrown = "0.15.2"
@@ -44,6 +45,5 @@ serde_json = "1.0.140"
 thiserror = "2.0.12"
 tokio = { version = "1.44.2", default-features = false }
 tokio-util = "0.7.14"
-dotenvy = "0.15"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
