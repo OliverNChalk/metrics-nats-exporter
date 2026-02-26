@@ -110,6 +110,9 @@ impl LineExporter {
                 _ = self.flush_interval.tick() => self.flush(),
             }
         }
+
+        self.collect_metrics(true);
+        self.flush();
     }
 
     fn tick(&mut self, interval_start: tokio::time::Instant) {
