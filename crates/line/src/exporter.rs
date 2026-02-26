@@ -32,10 +32,10 @@ pub(crate) struct LineExporter {
     flush_interval: tokio::time::Interval,
     last_publish_all: tokio::time::Instant,
     consecutive_skipped: u64,
-    buffer: String,
 }
 
 pub(crate) struct LineExporterState {
+    buffer: String,
     metrics: HashMap<u64, MetricState>,
     histograms: HashMap<u64, HistogramState>,
     http_client: Client,
@@ -83,6 +83,7 @@ impl LineExporter {
 
             recorder,
             state: LineExporterState {
+                buffer: String::new(),
                 metrics: HashMap::default(),
                 histograms: HashMap::default(),
                 http_client,
@@ -94,7 +95,6 @@ impl LineExporter {
             flush_interval,
             last_publish_all: tokio::time::Instant::now(),
             consecutive_skipped: 0,
-            buffer: String::new(),
         }
     }
 
@@ -125,7 +125,7 @@ impl LineExporter {
     }
 
     fn flush(&mut self) {
-        if self.buffer.is_empty() {
+        if self.state.buffer.is_empty() {
             return;
         }
 
@@ -149,7 +149,7 @@ impl LineExporter {
         self.consecutive_skipped = 0;
 
         // Take the buffer and send it.
-        let body = std::mem::take(&mut self.buffer);
+        let body = std::mem::take(&mut self.state.buffer);
         let client = self.state.http_client.clone();
         let url = self.state.write_url.clone();
         let auth_header = self.state.auth_header.clone();
@@ -179,7 +179,6 @@ impl LineExporter {
         self.recorder.registry.visit_counters(|key, counter| {
             Self::handle_metric(
                 &mut self.state,
-                &mut self.buffer,
                 &self.config,
                 key,
                 counter,
@@ -192,7 +191,6 @@ impl LineExporter {
         self.recorder.registry.visit_gauges(|key, gauge| {
             Self::handle_metric(
                 &mut self.state,
-                &mut self.buffer,
                 &self.config,
                 key,
                 gauge,
@@ -205,7 +203,6 @@ impl LineExporter {
         self.recorder.registry.visit_histograms(|key, histogram| {
             Self::handle_histogram(
                 &mut self.state,
-                &mut self.buffer,
                 &self.config,
                 key,
                 histogram,
@@ -215,10 +212,8 @@ impl LineExporter {
         });
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn handle_metric<T>(
         state: &mut LineExporterState,
-        buffer: &mut String,
         config: &Config,
         key: &Key,
         metric: &Arc<AtomicU64>,
@@ -257,7 +252,7 @@ impl LineExporter {
             match convert(curr) {
                 MetricValue::Counter(val) => {
                     crate::line_protocol::write_counter(
-                        buffer,
+                        &mut state.buffer,
                         name,
                         tags,
                         &config.default_tags,
@@ -267,7 +262,7 @@ impl LineExporter {
                 }
                 MetricValue::Gauge(val) => {
                     crate::line_protocol::write_gauge(
-                        buffer,
+                        &mut state.buffer,
                         name,
                         tags,
                         &config.default_tags,
@@ -281,7 +276,6 @@ impl LineExporter {
 
     fn handle_histogram(
         state: &mut LineExporterState,
-        buffer: &mut String,
         config: &Config,
         key: &Key,
         histogram: &Arc<AtomicBucketInstant<f64>>,
@@ -343,7 +337,7 @@ impl LineExporter {
             let snapshot = summary.snapshot(quanta::Instant::now());
 
             crate::line_protocol::write_histogram(
-                buffer,
+                &mut state.buffer,
                 name,
                 tags,
                 &config.default_tags,
