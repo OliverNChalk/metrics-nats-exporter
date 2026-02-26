@@ -1,0 +1,27 @@
+[package]
+name = "metrics-line-exporter"
+version = "0.1.0"
+edition = "2021"
+readme = "README.md"
+authors = ["Oliver Chalk"]
+license = "MIT OR Apache-2.0"
+
+[lints]
+workspace = true
+
+[dependencies]
+hashbrown.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+metrics-util.workspace = true
+quanta.workspace = true
+reqwest = { workspace = true, features = ["rustls-tls"] }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt", "time"] }
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+dotenvy.workspace = true
+expect-test.workspace = true
+tracing-subscriber.workspace = true
